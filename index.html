@@ -4,6 +4,14 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 <meta name="theme-color" content="#111827" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Money" />
+<meta name="application-name" content="Money" />
+<link rel="manifest" href="./manifest.json" />
+<link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
+<link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png" />
 <title>My Expenses</title>
 <style>
 :root{--bg:#f2f2f7;--card:rgba(255,255,255,.92);--text:#111113;--muted:#8e8e93;--line:rgba(60,60,67,.12);--accent:#0a84ff;--accent2:#5ac8fa;--green:#34c759;--red:#ff3b30;--orange:#ff9f0a;--nav:rgba(249,249,249,.88);--shadow:0 12px 35px rgba(0,0,0,.07)}
@@ -113,6 +121,17 @@ function setReport(v,b){reportMode=v;document.querySelectorAll("#reports .tabs b
 function exportData(){let blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="my-expenses-backup-"+today()+".json";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
 function importData(e){let f=e.target.files[0];if(!f)return;let r=new FileReader();r.onload=()=>{try{let x=JSON.parse(r.result);if(!Array.isArray(x.accounts)||!Array.isArray(x.categories)||!Array.isArray(x.transactions))throw Error();if(!confirm("Replace current app data with this backup?"))return;data=x;save();processRecurring();render();alert("Backup restored. Recurring transactions due up to today were auto-posted.")}catch{alert("Invalid backup file.")}};r.readAsText(f);e.target.value=""}
 render();
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./service-worker.js", {
+      scope: "./",
+      updateViaCache: "none"
+    }).then(registration => registration.update()).catch(error => {
+      console.warn("Offline support could not be enabled:", error);
+    });
+  });
+}
 </script>
 </body>
 </html>
