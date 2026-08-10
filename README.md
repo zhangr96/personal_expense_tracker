@@ -21,6 +21,8 @@ previous deployment as a precaution.
 
 - Bank and Cash expenses reduce the available balance; income increases it.
 - Credit Card purchases increase the amount owed; refunds/income reduce it.
+- Purchases can optionally record a merchant, which appears in transaction details.
+- Weekly and monthly reports include spending totals grouped by merchant.
 - Transfers move value between accounts. A Bank-to-Credit-Card transfer is a
   repayment and reduces both bank cash and card debt.
 - Transfers never count as income or spending in reports.

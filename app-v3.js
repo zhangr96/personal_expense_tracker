@@ -86,11 +86,14 @@
       <button onclick="setTxFilter('transfer',this)">Transfers</button>
       <button onclick="setTxFilter('recurring',this)">Recurring</button>`;
 
+    el("reportCats").insertAdjacentHTML("afterend", `<div class="section-title"><h2>Spending by merchant</h2></div><div id="reportMerchants"></div>`);
+
     document.querySelector("#txModal .sheet").innerHTML = `
       <h2 id="txTitle">Add transaction</h2><form class="form" onsubmit="saveTx(event)">
       <label>Type<select id="txType" onchange="syncTxForm()"><option value="expense">Purchase / expense</option><option value="income">Income / refund</option><option value="transfer">Transfer / card repayment</option></select></label>
       <label>Amount<input id="txAmount" type="number" step="0.01" min="0.01" required placeholder="0.00"></label>
       <label>Description<input id="txDesc" required placeholder="e.g. Tesco groceries or Amex payment"></label>
+      <label id="txMerchantField">Merchant<input id="txMerchant" placeholder="e.g. Tesco, Amazon or Shell"></label>
       <label id="txCatField">Category<select id="txCat"></select></label>
       <label><span id="txAccountLabel">Account</span><select id="txAccount" onchange="syncTxForm()"></select></label>
       <label id="txToField" class="field-hidden">To account<select id="txToAccount"></select></label>
@@ -123,6 +126,8 @@
 
   window.syncTxForm = function () {
     const transfer = el("txType").value === "transfer";
+    const expense = el("txType").value === "expense";
+    el("txMerchantField").classList.toggle("field-hidden", !expense);
     el("txCatField").classList.toggle("field-hidden", transfer);
     el("txToField").classList.toggle("field-hidden", !transfer);
     el("txAccountLabel").textContent = transfer ? "From account" : "Account";
@@ -135,7 +140,7 @@
   openTx = function () {
     if (!data.accounts.length) { alert("Add an account first."); showView("settings"); return; }
     editingId = null; el("txTitle").textContent = "Add transaction"; fillSelects();
-    el("txType").value = "expense"; el("txAmount").value = ""; el("txDesc").value = "";
+    el("txType").value = "expense"; el("txAmount").value = ""; el("txDesc").value = ""; el("txMerchant").value = "";
     el("txDate").value = today(); el("txRecurring").value = "oneoff"; el("txNotes").value = "";
     syncTxForm(); el("txModal").classList.add("open");
   };
@@ -146,7 +151,7 @@
     if (type === "transfer" && data.accounts.length < 2) return alert("Add a second account before making a transfer.");
     if (type === "transfer" && el("txAccount").value === el("txToAccount").value) return alert("Choose two different accounts.");
     const existing = editingId ? data.transactions.find(x => x.id === editingId) : null;
-    const t = { id: editingId || uuid(), type, amount: Math.abs(Number(el("txAmount").value)), description: el("txDesc").value.trim(), category: type === "transfer" ? null : el("txCat").value, account: el("txAccount").value, date: el("txDate").value, recurring: el("txRecurring").value, notes: el("txNotes").value.trim() };
+    const t = { id: editingId || uuid(), type, amount: Math.abs(Number(el("txAmount").value)), description: el("txDesc").value.trim(), merchant: type === "expense" ? el("txMerchant").value.trim() : "", category: type === "transfer" ? null : el("txCat").value, account: el("txAccount").value, date: el("txDate").value, recurring: el("txRecurring").value, notes: el("txNotes").value.trim() };
     if (type === "transfer") t.toAccount = el("txToAccount").value;
     if (existing?.generatedFrom) { t.generatedFrom = existing.generatedFrom; t.autoPosted = existing.autoPosted; }
     if (editingId) data.transactions[data.transactions.findIndex(x => x.id === editingId)] = t; else data.transactions.push(t);
@@ -156,7 +161,7 @@
   editTx = function (id) {
     const t = data.transactions.find(x => x.id === id); editingId = id; fillSelects();
     el("txTitle").textContent = t.type === "transfer" ? "Edit transfer" : "Edit transaction";
-    el("txType").value = t.type; el("txAmount").value = t.amount; el("txDesc").value = t.description;
+    el("txType").value = t.type; el("txAmount").value = t.amount; el("txDesc").value = t.description; el("txMerchant").value = t.merchant || "";
     if (t.category) el("txCat").value = t.category; el("txAccount").value = t.account;
     if (t.toAccount) el("txToAccount").value = t.toAccount; el("txDate").value = t.date;
     el("txRecurring").value = t.recurring || "oneoff"; el("txNotes").value = t.notes || "";
@@ -192,7 +197,8 @@
     const label = repayment ? "Card repayment" : (purchase ? "Card purchase" : (transfer ? "Transfer" : (t.type === "income" ? "Income / refund" : "Expense")));
     const c = transfer ? { icon: repayment ? "💳" : "↔️", name: label } : getCat(t.category);
     const future = t.date > today(), tag = future ? " · ◷ scheduled" : (t.autoPosted ? " · ⚡ auto-posted" : (t.recurring !== "oneoff" ? " · ↻ " + t.recurring : ""));
-    const route = transfer ? `${esc(from.name)} <span class="transfer-arrow">→</span> ${esc(to.name)}` : `${esc(c.name)} · ${esc(from.name)}`;
+    const merchant = t.type === "expense" && t.merchant ? `${esc(t.merchant)} · ` : "";
+    const route = transfer ? `${esc(from.name)} <span class="transfer-arrow">→</span> ${esc(to.name)}` : `${merchant}${esc(c.name)} · ${esc(from.name)}`;
     const amountClass = transfer ? "" : (t.type === "income" ? "green" : "red"), sign = transfer ? "" : (t.type === "income" ? "+" : "−");
     return `<div class="row"><div class="left"><div class="icon">${c.icon}</div><div><b>${esc(t.description)}</b><div><span class="tx-kind ${kind}">${label}</span></div><div class="muted">${route} · ${fmtDate(t.date)}${tag}</div></div></div><div style="text-align:right"><div class="amount ${amountClass}">${sign}${money(t.amount)}</div>${actions ? `<button class="btn small secondary" onclick="editTx('${t.id}')">Edit</button> <button class="btn small danger" onclick="deleteTx('${t.id}')">Delete</button>` : ""}</div></div>`;
   };
@@ -210,12 +216,32 @@
   };
 
   const originalRenderReports = renderReports;
+  function renderMerchantReport() {
+    const now = new Date();
+    const start = reportMode === "weekly" ? new Date(now) : new Date(now.getFullYear(), now.getMonth(), 1);
+    if (reportMode === "weekly") start.setDate(now.getDate() - 6);
+    const startDate = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+    const totals = {};
+    data.transactions.filter(t => {
+      const date = new Date(t.date + "T00:00:00");
+      return t.type === "expense" && date >= startDate && date <= now;
+    }).forEach(t => {
+      const merchant = (t.merchant || "").trim() || "Unspecified merchant";
+      totals[merchant] = (totals[merchant] || 0) + Number(t.amount);
+    });
+    const merchants = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+    el("reportMerchants").innerHTML = merchants.length ? merchants.map(([merchant, total]) =>
+      `<div class="row"><span>🏪 ${esc(merchant)}</span><b>${money(total)}</b></div>`
+    ).join("") : `<div class="empty">No merchant spending in this period</div>`;
+  }
+
   renderReports = function () {
     // Exclude transfers from every report figure, including the transaction count.
     const allTransactions = data.transactions;
     data.transactions = allTransactions.filter(t => t.type !== "transfer");
     originalRenderReports();
     data.transactions = allTransactions;
+    renderMerchantReport();
   };
 
   render = function () {
