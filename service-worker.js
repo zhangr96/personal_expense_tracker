@@ -1,5 +1,5 @@
 const CACHE_PREFIX = "personal-expense-tracker-";
-const CACHE_VERSION = "v5-credit-cards";
+const CACHE_VERSION = "v7-merchant-reports";
 const CACHE_NAME = `${CACHE_PREFIX}${CACHE_VERSION}`;
 const APP_SHELL = [
   "./",
