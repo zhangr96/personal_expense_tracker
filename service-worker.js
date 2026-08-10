@@ -1,9 +1,10 @@
 const CACHE_PREFIX = "personal-expense-tracker-";
-const CACHE_VERSION = "v4";
+const CACHE_VERSION = "v5-credit-cards";
 const CACHE_NAME = `${CACHE_PREFIX}${CACHE_VERSION}`;
 const APP_SHELL = [
   "./",
   "./index.html",
+  "./app-v3.js",
   "./manifest.json",
   "./icon-192.png",
   "./icon-512.png",
