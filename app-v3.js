@@ -485,7 +485,16 @@
     el("accountHistorySummary").textContent = transactions.length + " transaction" +
       (transactions.length === 1 ? "" : "s") + " associated with this account.";
     el("accountHistoryList").innerHTML = transactions.length
-      ? transactions.map(transaction => txHtml(transaction, false)).join("")
+      ? transactions.map(transaction => {
+          const html = txHtml(transaction, false);
+          if (transaction.type !== "transfer") return html;
+          const sending = transaction.account === accountId;
+          return html.replace(
+            '<div class="amount ">' + money(transaction.amount) + "</div>",
+            '<div class="amount ' + (sending ? "red" : "green") + '">' +
+              (sending ? "−" : "+") + money(transaction.amount) + "</div>"
+          );
+        }).join("")
       : '<div class="empty">No transactions for this account yet.</div>';
     el("accountHistoryModal").classList.add("open");
   };
