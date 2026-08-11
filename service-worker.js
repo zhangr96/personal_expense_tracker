@@ -1,5 +1,5 @@
 const CACHE_PREFIX = "personal-expense-tracker-";
-const CACHE_VERSION = "v7-merchant-reports";
+const CACHE_VERSION = "v8-import-and-account-edit";
 const CACHE_NAME = `${CACHE_PREFIX}${CACHE_VERSION}`;
 const APP_SHELL = [
   "./",
