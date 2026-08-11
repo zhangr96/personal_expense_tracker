@@ -267,3 +267,193 @@
 
   installStyles(); installUi(); render();
 })();
+
+
+/* Transaction import and account editing upgrade. Keeps the existing my-expenses-v2 data key. */
+(function () {
+  let editingAccountId = null;
+  let pendingImports = [];
+
+  function normalizeText(value) {
+    return String(value || "").trim().replace(/\s+/g, " ");
+  }
+
+  function transactionFingerprint(transaction) {
+    return [
+      transaction.date,
+      normalizeText(transaction.description).toLowerCase(),
+      Math.abs(Number(transaction.amount || 0)).toFixed(2),
+      transaction.account
+    ].join("|");
+  }
+
+  function installImportUi() {
+    const backupHeading = [...document.querySelectorAll("#settings h3")].find(node => node.textContent.trim() === "Backup & restore");
+    if (!backupHeading) return;
+    backupHeading.insertAdjacentHTML("beforebegin", [
+      "<hr>",
+      "<h3>Transaction import</h3>",
+      '<div class="muted">Add transactions from a JSON file without replacing your accounts, categories, or existing records.</div>',
+      '<div class="actions"><button class="btn secondary" onclick="document.getElementById(\'transactionImportFile\').click()">Import transactions</button></div>',
+      '<input id="transactionImportFile" type="file" accept=".json,application/json" style="display:none" onchange="prepareTransactionImport(event)">'
+    ].join(""));
+
+    document.body.insertAdjacentHTML("beforeend", [
+      '<div id="transactionImportModal" class="modal" onclick="if(event.target===this)closeTransactionImport()">',
+      '<div class="sheet"><h2>Import transactions</h2>',
+      '<div class="form">',
+      '<label>Account<select id="importAccount"></select></label>',
+      '<label>Default category<select id="importCategory"></select></label>',
+      '<div id="importSummary" class="notice"></div>',
+      '<div id="importPreview" class="list"></div>',
+      '<div class="actions"><button type="button" class="btn secondary" onclick="closeTransactionImport()">Cancel</button>',
+      '<button type="button" id="confirmTransactionImport" class="btn" onclick="confirmTransactionImport()">Import</button></div>',
+      "</div></div></div>"
+    ].join(""));
+  }
+
+  window.prepareTransactionImport = function (event) {
+    const file = event.target.files[0];
+    event.target.value = "";
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        const items = Array.isArray(parsed) ? parsed : parsed.transactions;
+        if (!Array.isArray(items) || !items.length) throw new Error("No transactions");
+        const validDate = /^\d{4}-\d{2}-\d{2}$/;
+        pendingImports = items.map((item, index) => {
+          const amount = Number(item.amount);
+          const description = normalizeText(item.description || item.name || item.merchant);
+          if (!validDate.test(String(item.date || "")) || !Number.isFinite(amount) || amount === 0 || !description) {
+            throw new Error("Invalid transaction at item " + (index + 1));
+          }
+          return {
+            date: String(item.date),
+            description,
+            merchant: normalizeText(item.merchant || ""),
+            amount,
+            status: normalizeText(item.status || ""),
+            notes: normalizeText(item.notes || "")
+          };
+        });
+        el("importAccount").innerHTML = data.accounts.map(account => '<option value="' + account.id + '">' + esc(account.name) + "</option>").join("");
+        el("importCategory").innerHTML = data.categories.map(category => '<option value="' + category.id + '">' + category.icon + " " + esc(category.name) + "</option>").join("");
+        el("importPreview").innerHTML = pendingImports.slice(0, 50).map(item =>
+          '<div class="row"><div><b>' + esc(item.description) + '</b><div class="muted">' + fmtDate(item.date) +
+          (item.status ? " · " + esc(item.status) : "") + '</div></div><div class="amount ' +
+          (item.amount < 0 ? "green" : "red") + '">' + (item.amount < 0 ? "+" : "−") + money(Math.abs(item.amount)) + "</div></div>"
+        ).join("") + (pendingImports.length > 50 ? '<div class="muted">Previewing the first 50 transactions.</div>' : "");
+        el("importSummary").textContent = pendingImports.length + " transaction" + (pendingImports.length === 1 ? "" : "s") +
+          " ready. Negative amounts will be imported as income/refunds.";
+        el("confirmTransactionImport").disabled = false;
+        el("transactionImportModal").classList.add("open");
+      } catch (error) {
+        pendingImports = [];
+        alert("Invalid transaction file. Use a JSON array with date, description, and non-zero amount fields.");
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  window.closeTransactionImport = function () {
+    pendingImports = [];
+    el("transactionImportModal").classList.remove("open");
+  };
+
+  window.confirmTransactionImport = function () {
+    const account = el("importAccount").value;
+    const category = el("importCategory").value;
+    const existing = new Set(data.transactions.map(transactionFingerprint));
+    let imported = 0;
+    let skipped = 0;
+    pendingImports.forEach(item => {
+      const transaction = {
+        id: crypto.randomUUID(),
+        type: item.amount < 0 ? "income" : "expense",
+        amount: Math.abs(item.amount),
+        description: item.description,
+        merchant: item.merchant,
+        category,
+        account,
+        date: item.date,
+        recurring: "oneoff",
+        notes: [item.notes, item.status ? "Imported status: " + item.status : ""].filter(Boolean).join(" · ")
+      };
+      const fingerprint = transactionFingerprint(transaction);
+      if (existing.has(fingerprint)) {
+        skipped++;
+        return;
+      }
+      existing.add(fingerprint);
+      data.transactions.push(transaction);
+      imported++;
+    });
+    save();
+    closeTransactionImport();
+    render();
+    alert("Imported " + imported + " transaction" + (imported === 1 ? "" : "s") +
+      (skipped ? ". Skipped " + skipped + " duplicate" + (skipped === 1 ? "" : "s") + "." : "."));
+  };
+
+  const originalOpenAccount = openAccount;
+  openAccount = function (id) {
+    editingAccountId = typeof id === "string" ? id : null;
+    if (!editingAccountId) {
+      originalOpenAccount();
+      el("accountModal").querySelector("h2").textContent = "Add account";
+      el("accType").disabled = false;
+      return;
+    }
+    const account = data.accounts.find(item => item.id === editingAccountId);
+    if (!account) return;
+    el("accountModal").classList.add("open");
+    el("accountModal").querySelector("h2").textContent = "Edit account";
+    el("accName").value = account.name;
+    el("accType").value = account.type || "bank";
+    el("accType").disabled = true;
+    el("accBalance").value = Number(account.opening || 0);
+    syncAccountForm();
+  };
+
+  saveAccount = function (event) {
+    event.preventDefault();
+    const name = el("accName").value.trim();
+    const opening = Math.abs(Number(el("accBalance").value || 0));
+    if (editingAccountId) {
+      const account = data.accounts.find(item => item.id === editingAccountId);
+      if (account) {
+        account.name = name;
+        account.opening = opening;
+      }
+    } else {
+      data.accounts.push({
+        id: crypto.randomUUID(),
+        name,
+        type: el("accType").value,
+        opening
+      });
+    }
+    editingAccountId = null;
+    el("accType").disabled = false;
+    save();
+    closeModal("accountModal");
+    render();
+  };
+
+  const baseRenderSettings = renderSettings;
+  renderSettings = function () {
+    baseRenderSettings();
+    el("settingsAccounts").innerHTML = data.accounts.map(account =>
+      '<div class="row"><span><b>' + esc(account.name) + '</b><br><span class="account-type ' +
+      account.type + '">' + ({ bank: "Bank Account", credit: "Credit Card", cash: "Cash" }[account.type] || "Bank Account") +
+      '</span><br><span class="muted">Opening ' + money(account.opening) + '</span></span><span>' +
+      '<button class="btn small secondary" onclick="openAccount(\'' + account.id + '\')">Edit</button> ' +
+      '<button class="btn small danger" onclick="deleteAccount(\'' + account.id + '\')">Delete</button></span></div>'
+    ).join("");
+  };
+
+  installImportUi();
+  renderSettings();
+})();
