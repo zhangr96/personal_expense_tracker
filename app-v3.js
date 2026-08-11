@@ -461,6 +461,8 @@
 
 /* Account transaction history upgrade. */
 (function () {
+  let activeAccountHistoryId = null;
+
   function installAccountHistoryUi() {
     const style = document.createElement("style");
     style.textContent = ".account-history-row{cursor:pointer;border-radius:14px;padding-left:8px;padding-right:8px}.account-history-row:active{background:rgba(10,132,255,.08)}";
@@ -478,6 +480,7 @@
   window.openAccountHistory = function (accountId) {
     const account = data.accounts.find(item => item.id === accountId);
     if (!account) return;
+    activeAccountHistoryId = accountId;
     const transactions = data.transactions
       .filter(transaction => transaction.account === accountId || transaction.toAccount === accountId)
       .sort((a, b) => b.date.localeCompare(a.date));
@@ -486,7 +489,15 @@
       (transactions.length === 1 ? "" : "s") + " associated with this account.";
     el("accountHistoryList").innerHTML = transactions.length
       ? transactions.map(transaction => {
-          const html = txHtml(transaction, false);
+          let html = txHtml(transaction, true)
+            .replace(
+              "onclick=\"editTx('" + transaction.id + "')\"",
+              "onclick=\"editAccountHistoryTransaction('" + transaction.id + "')\""
+            )
+            .replace(
+              "onclick=\"deleteTx('" + transaction.id + "')\"",
+              "onclick=\"deleteAccountHistoryTransaction('" + transaction.id + "')\""
+            );
           if (transaction.type !== "transfer") return html;
           const sending = transaction.account === accountId;
           return html.replace(
@@ -500,7 +511,22 @@
   };
 
   window.closeAccountHistory = function () {
+    activeAccountHistoryId = null;
     el("accountHistoryModal").classList.remove("open");
+  };
+
+  window.editAccountHistoryTransaction = function (transactionId) {
+    closeAccountHistory();
+    editTx(transactionId);
+  };
+
+  window.deleteAccountHistoryTransaction = function (transactionId) {
+    if (!confirm("Delete this transaction?")) return;
+    const accountId = activeAccountHistoryId;
+    data.transactions = data.transactions.filter(transaction => transaction.id !== transactionId);
+    save();
+    render();
+    if (accountId) openAccountHistory(accountId);
   };
 
   const baseRenderAccounts = renderAccounts;
