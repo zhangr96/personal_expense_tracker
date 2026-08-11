@@ -457,3 +457,63 @@
   installImportUi();
   renderSettings();
 })();
+
+
+/* Account transaction history upgrade. */
+(function () {
+  function installAccountHistoryUi() {
+    const style = document.createElement("style");
+    style.textContent = ".account-history-row{cursor:pointer;border-radius:14px;padding-left:8px;padding-right:8px}.account-history-row:active{background:rgba(10,132,255,.08)}";
+    document.head.appendChild(style);
+    document.body.insertAdjacentHTML("beforeend", [
+      '<div id="accountHistoryModal" class="modal" onclick="if(event.target===this)closeAccountHistory()">',
+      '<div class="sheet"><h2 id="accountHistoryTitle">Account transactions</h2>',
+      '<div id="accountHistorySummary" class="notice"></div>',
+      '<div id="accountHistoryList" class="list"></div>',
+      '<div class="actions"><button type="button" class="btn secondary" onclick="closeAccountHistory()">Close</button></div>',
+      "</div></div>"
+    ].join(""));
+  }
+
+  window.openAccountHistory = function (accountId) {
+    const account = data.accounts.find(item => item.id === accountId);
+    if (!account) return;
+    const transactions = data.transactions
+      .filter(transaction => transaction.account === accountId || transaction.toAccount === accountId)
+      .sort((a, b) => b.date.localeCompare(a.date));
+    el("accountHistoryTitle").textContent = account.name;
+    el("accountHistorySummary").textContent = transactions.length + " transaction" +
+      (transactions.length === 1 ? "" : "s") + " associated with this account.";
+    el("accountHistoryList").innerHTML = transactions.length
+      ? transactions.map(transaction => txHtml(transaction, false)).join("")
+      : '<div class="empty">No transactions for this account yet.</div>';
+    el("accountHistoryModal").classList.add("open");
+  };
+
+  window.closeAccountHistory = function () {
+    el("accountHistoryModal").classList.remove("open");
+  };
+
+  const baseRenderAccounts = renderAccounts;
+  renderAccounts = function () {
+    baseRenderAccounts();
+    [...el("accountList").children].forEach((row, index) => {
+      const account = data.accounts[index];
+      if (!account) return;
+      row.classList.add("account-history-row");
+      row.setAttribute("role", "button");
+      row.setAttribute("tabindex", "0");
+      row.setAttribute("aria-label", "View transactions for " + account.name);
+      row.onclick = () => openAccountHistory(account.id);
+      row.onkeydown = event => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          openAccountHistory(account.id);
+        }
+      };
+    });
+  };
+
+  installAccountHistoryUi();
+  renderAccounts();
+})();
