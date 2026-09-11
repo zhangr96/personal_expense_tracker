@@ -552,3 +552,170 @@
   installAccountHistoryUi();
   renderAccounts();
 })();
+
+
+/* Recurring management and amount search upgrade. */
+(function () {
+  let amountSearch = "";
+
+  function recurringSkipKey(transaction) {
+    return transaction.generatedFrom + "|" + transaction.date;
+  }
+
+  function ensureRecurringSkips() {
+    if (!Array.isArray(data.recurringSkips)) data.recurringSkips = [];
+  }
+
+  function removeTransactionWithRecurringProtection(transactionId) {
+    const transaction = data.transactions.find(item => item.id === transactionId);
+    if (!transaction) return false;
+    ensureRecurringSkips();
+    if (transaction.generatedFrom) {
+      const key = recurringSkipKey(transaction);
+      if (!data.recurringSkips.includes(key)) data.recurringSkips.push(key);
+    }
+    data.transactions = data.transactions.filter(item => item.id !== transactionId);
+    save();
+    return true;
+  }
+
+  processRecurring = function () {
+    ensureRecurringSkips();
+    const todayStr = today();
+    let added = 0;
+    const skips = new Set(data.recurringSkips);
+    const templates = data.transactions.filter(transaction =>
+      transaction.recurring && transaction.recurring !== "oneoff" && !transaction.generatedFrom
+    );
+    for (const template of templates) {
+      for (let index = 1; index < 5000; index++) {
+        const due = nextRecurringDate(template.date, template.recurring, index);
+        if (!due || due > todayStr) break;
+        const key = template.id + "|" + due;
+        if (skips.has(key)) continue;
+        const exists = data.transactions.some(item => item.generatedFrom === template.id && item.date === due);
+        if (!exists) {
+          data.transactions.push({
+            ...template,
+            id: crypto.randomUUID(),
+            date: due,
+            recurring: "oneoff",
+            generatedFrom: template.id,
+            autoPosted: true
+          });
+          added++;
+        }
+      }
+    }
+    if (added) save();
+    return added;
+  };
+
+  deleteTx = function (transactionId) {
+    if (!confirm("Delete this transaction?")) return;
+    removeTransactionWithRecurringProtection(transactionId);
+    render();
+  };
+
+  deleteAccountHistoryTransaction = function (transactionId) {
+    if (!confirm("Delete this transaction?")) return;
+    const accountId = document.getElementById("accountHistoryModal").classList.contains("open")
+      ? data.accounts.find(account => {
+          const title = el("accountHistoryTitle").textContent;
+          return account.name === title;
+        })?.id
+      : null;
+    removeTransactionWithRecurringProtection(transactionId);
+    render();
+    if (accountId) openAccountHistory(accountId);
+  };
+
+  function installRecurringManagementUi() {
+    const transactionsHeading = document.querySelector("#transactions .section-title");
+    transactionsHeading.insertAdjacentHTML("afterend",
+      '<div class="card" style="margin-bottom:12px"><label class="muted" for="amountSearch">Search expenses by amount</label>' +
+      '<input id="amountSearch" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Enter an amount, e.g. 25.30" ' +
+      'style="width:100%;margin-top:7px;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--text)" ' +
+      'oninput="setAmountSearch(this.value)"></div>'
+    );
+
+    const settingsCard = document.querySelector("#settings .card");
+    const backupHeading = [...settingsCard.querySelectorAll("h3")].find(node => node.textContent.trim() === "Backup & restore");
+    backupHeading.insertAdjacentHTML("beforebegin", [
+      "<hr><h3>Automatic postings</h3>",
+      '<div class="muted">Review recurring schedules and the occurrences posted automatically.</div>',
+      '<div class="actions"><button class="btn secondary" onclick="openRecurringManager()">Manage automatic postings</button></div>'
+    ].join(""));
+
+    document.body.insertAdjacentHTML("beforeend", [
+      '<div id="recurringManagerModal" class="modal" onclick="if(event.target===this)closeRecurringManager()">',
+      '<div class="sheet"><h2>Automatic postings</h2>',
+      '<div id="recurringManagerSummary" class="notice"></div>',
+      '<div id="recurringManagerList" class="list"></div>',
+      '<div class="actions"><button type="button" class="btn secondary" onclick="closeRecurringManager()">Close</button></div>',
+      "</div></div>"
+    ].join(""));
+  }
+
+  window.setAmountSearch = function (value) {
+    amountSearch = String(value || "").trim();
+    renderTx();
+  };
+
+  const previousRenderTx = renderTx;
+  renderTx = function () {
+    previousRenderTx();
+    if (!amountSearch) return;
+    const target = Number(amountSearch);
+    if (!Number.isFinite(target)) return;
+    let items = [...data.transactions]
+      .filter(transaction => transaction.type === "expense" && Math.abs(Number(transaction.amount) - target) < 0.005)
+      .sort((a, b) => b.date.localeCompare(a.date));
+    el("txList").innerHTML = items.length
+      ? items.map(transaction => txHtml(transaction, true)).join("")
+      : '<div class="empty">No expenses found for ' + money(target) + ".</div>";
+  };
+
+  window.openRecurringManager = function () {
+    const items = data.transactions
+      .filter(transaction => (transaction.recurring && transaction.recurring !== "oneoff") || transaction.autoPosted)
+      .sort((a, b) => b.date.localeCompare(a.date));
+    const schedules = items.filter(transaction => !transaction.generatedFrom).length;
+    const postedItems = items.filter(transaction => transaction.autoPosted).length;
+    el("recurringManagerSummary").textContent =
+      schedules + " active recurring schedule" + (schedules === 1 ? "" : "s") + " · " +
+      postedItems + " auto-posted item" + (postedItems === 1 ? "" : "s");
+    el("recurringManagerList").innerHTML = items.length
+      ? items.map(transaction => txHtml(transaction, true)
+          .replace(
+            "onclick=\"editTx('" + transaction.id + "')\"",
+            "onclick=\"editRecurringItem('" + transaction.id + "')\""
+          )
+          .replace(
+            "onclick=\"deleteTx('" + transaction.id + "')\"",
+            "onclick=\"deleteRecurringItem('" + transaction.id + "')\""
+          )
+        ).join("")
+      : '<div class="empty">No recurring schedules or auto-posted items.</div>';
+    el("recurringManagerModal").classList.add("open");
+  };
+
+  window.closeRecurringManager = function () {
+    el("recurringManagerModal").classList.remove("open");
+  };
+
+  window.editRecurringItem = function (transactionId) {
+    closeRecurringManager();
+    editTx(transactionId);
+  };
+
+  window.deleteRecurringItem = function (transactionId) {
+    if (!confirm("Delete this automatic posting?")) return;
+    removeTransactionWithRecurringProtection(transactionId);
+    render();
+    openRecurringManager();
+  };
+
+  ensureRecurringSkips();
+  installRecurringManagementUi();
+})();
