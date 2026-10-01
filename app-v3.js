@@ -41,6 +41,22 @@
       .reduce((sum, t) => sum + accountDelta(t, account.id), 0);
   }
 
+  function balanceAfterTransaction(transaction, account) {
+    const transactionIndex = data.transactions.indexOf(transaction);
+    return Number(account.opening || 0) + data.transactions.reduce((sum, item, index) => {
+      const belongsToAccount = item.account === account.id || item.toAccount === account.id;
+      const happenedByThen = item.date < transaction.date || (item.date === transaction.date && index <= transactionIndex);
+      return belongsToAccount && happenedByThen ? sum + accountDelta(item, account.id) : sum;
+    }, 0);
+  }
+
+  function balanceAfterHtml(transaction, from, to) {
+    const fromLabel = isCredit(from) ? "owed after" : "balance after";
+    if (!to) return `<div class="tx-balance">${esc(from.name)} ${fromLabel}: <b>${money(balanceAfterTransaction(transaction, from))}</b></div>`;
+    const toLabel = isCredit(to) ? "owed after" : "balance after";
+    return `<div class="tx-balance">${esc(from.name)} ${fromLabel}: <b>${money(balanceAfterTransaction(transaction, from))}</b><br>${esc(to.name)} ${toLabel}: <b>${money(balanceAfterTransaction(transaction, to))}</b></div>`;
+  }
+
   signed = function (t) {
     if (t.type === "transfer") return 0;
     const a = getAcc(t.account);
@@ -66,6 +82,7 @@
       .account-type.credit,.tx-kind.purchase{background:rgba(255,59,48,.1);color:var(--red)}
       .tx-kind.transfer,.tx-kind.repayment{background:rgba(175,82,222,.12);color:#af52de}
       .account-amount{text-align:right}.account-amount .muted{margin-top:2px}
+      .tx-balance{margin-top:4px;color:var(--muted);font-size:11.5px;line-height:1.4}.tx-balance b{color:var(--text);font-weight:700}
       .field-hidden{display:none}.summary-note{margin-top:7px}.transfer-arrow{color:var(--muted);padding:0 3px}
     `;
     document.head.appendChild(style);
@@ -200,7 +217,8 @@
     const merchant = t.type === "expense" && t.merchant ? `${esc(t.merchant)} · ` : "";
     const route = transfer ? `${esc(from.name)} <span class="transfer-arrow">→</span> ${esc(to.name)}` : `${merchant}${esc(c.name)} · ${esc(from.name)}`;
     const amountClass = transfer ? "" : (t.type === "income" ? "green" : "red"), sign = transfer ? "" : (t.type === "income" ? "+" : "−");
-    return `<div class="row"><div class="left"><div class="icon">${c.icon}</div><div><b>${esc(t.description)}</b><div><span class="tx-kind ${kind}">${label}</span></div><div class="muted">${route} · ${fmtDate(t.date)}${tag}</div></div></div><div style="text-align:right"><div class="amount ${amountClass}">${sign}${money(t.amount)}</div>${actions ? `<button class="btn small secondary" onclick="editTx('${t.id}')">Edit</button> <button class="btn small danger" onclick="deleteTx('${t.id}')">Delete</button>` : ""}</div></div>`;
+    const after = balanceAfterHtml(t, from, to);
+    return `<div class="row"><div class="left"><div class="icon">${c.icon}</div><div><b>${esc(t.description)}</b><div><span class="tx-kind ${kind}">${label}</span></div><div class="muted">${route} · ${fmtDate(t.date)}${tag}</div>${after}</div></div><div style="text-align:right"><div class="amount ${amountClass}">${sign}${money(t.amount)}</div>${actions ? `<button class="btn small secondary" onclick="editTx('${t.id}')">Edit</button> <button class="btn small danger" onclick="deleteTx('${t.id}')">Delete</button>` : ""}</div></div>`;
   };
 
   renderTx = function () {
