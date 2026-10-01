@@ -23,6 +23,7 @@ previous deployment as a precaution.
 - Credit Card purchases increase the amount owed; refunds/income reduce it.
 - Purchases can optionally record a merchant, which appears in transaction details.
 - Weekly and monthly reports include spending totals grouped by merchant.
+- Transaction rows show the affected account balance immediately after each transaction; transfers show both accounts.
 - Transfers move value between accounts. A Bank-to-Credit-Card transfer is a
   repayment and reduces both bank cash and card debt.
 - Transfers never count as income or spending in reports.
