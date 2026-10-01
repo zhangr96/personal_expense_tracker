@@ -4,6 +4,11 @@
   const uuid = () => crypto.randomUUID();
   const isCredit = account => account?.type === "credit";
   const posted = t => t.date <= today();
+  const transactionPosition = transaction => data.transactions.indexOf(transaction);
+  function newestTransactionFirst(a, b) {
+    return b.date.localeCompare(a.date) || transactionPosition(b) - transactionPosition(a);
+  }
+  window.transactionNewestFirst = newestTransactionFirst;
 
   function migrate(input) {
     const migrated = input && Array.isArray(input.accounts) && Array.isArray(input.transactions)
@@ -221,8 +226,18 @@
     return `<div class="row"><div class="left"><div class="icon">${c.icon}</div><div><b>${esc(t.description)}</b><div><span class="tx-kind ${kind}">${label}</span></div><div class="muted">${route} · ${fmtDate(t.date)}${tag}</div>${after}</div></div><div style="text-align:right"><div class="amount ${amountClass}">${sign}${money(t.amount)}</div>${actions ? `<button class="btn small secondary" onclick="editTx('${t.id}')">Edit</button> <button class="btn small danger" onclick="deleteTx('${t.id}')">Delete</button>` : ""}</div></div>`;
   };
 
+  renderRecent = function () {
+    const items = data.transactions
+      .filter(transaction => transaction.date <= today())
+      .sort(newestTransactionFirst)
+      .slice(0, 5);
+    el("recentList").innerHTML = items.length
+      ? items.map(transaction => txHtml(transaction)).join("")
+      : `<div class="empty">No transactions yet. Tap ＋ Add to get started.</div>`;
+  };
+
   renderTx = function () {
-    let items = [...data.transactions].sort((a, b) => b.date.localeCompare(a.date));
+    let items = [...data.transactions].sort(newestTransactionFirst);
     if (["expense", "income", "transfer"].includes(txFilter)) items = items.filter(t => t.type === txFilter);
     if (txFilter === "recurring") items = items.filter(t => t.recurring !== "oneoff");
     el("txList").innerHTML = items.length ? items.map(t => txHtml(t, true)).join("") : `<div class="empty">No transactions</div>`;
@@ -501,7 +516,7 @@
     activeAccountHistoryId = accountId;
     const transactions = data.transactions
       .filter(transaction => transaction.account === accountId || transaction.toAccount === accountId)
-      .sort((a, b) => b.date.localeCompare(a.date));
+      .sort(window.transactionNewestFirst);
     el("accountHistoryTitle").textContent = account.name;
     el("accountHistorySummary").textContent = transactions.length + " transaction" +
       (transactions.length === 1 ? "" : "s") + " associated with this account.";
@@ -688,7 +703,7 @@
     if (!Number.isFinite(target)) return;
     let items = [...data.transactions]
       .filter(transaction => transaction.type === "expense" && Math.abs(Number(transaction.amount) - target) < 0.005)
-      .sort((a, b) => b.date.localeCompare(a.date));
+      .sort(window.transactionNewestFirst);
     el("txList").innerHTML = items.length
       ? items.map(transaction => txHtml(transaction, true)).join("")
       : '<div class="empty">No expenses found for ' + money(target) + ".</div>";
@@ -697,7 +712,7 @@
   window.openRecurringManager = function () {
     const items = data.transactions
       .filter(transaction => (transaction.recurring && transaction.recurring !== "oneoff") || transaction.autoPosted)
-      .sort((a, b) => b.date.localeCompare(a.date));
+      .sort(window.transactionNewestFirst);
     const schedules = items.filter(transaction => !transaction.generatedFrom).length;
     const postedItems = items.filter(transaction => transaction.autoPosted).length;
     el("recurringManagerSummary").textContent =
