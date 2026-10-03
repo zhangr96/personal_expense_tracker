@@ -752,3 +752,286 @@
   ensureRecurringSkips();
   installRecurringManagementUi();
 })();
+
++
+/* Year/month report filters and consolidated annual chart. */
+(function () {
+  const now = new Date();
+  let reportYear = now.getFullYear();
+  let reportMonth = String(now.getMonth() + 1).padStart(2, "0");
+  const MONTHS = Array.from({ length: 12 }, (_, index) =>
+    new Date(2000, index, 1).toLocaleDateString("en-GB", { month: "short" })
+  );
+
+  function installReportStyles() {
+    const style = document.createElement("style");
+    style.textContent = `
+      .report-filters{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+      .report-filter{font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.035em}
+      .report-filter select{width:100%;padding:12px 13px;margin-top:6px;border:1px solid var(--line);border-radius:13px;background:var(--bg);color:var(--text);outline:none}
+      .report-filter select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(10,132,255,.12)}
+      .annual-legend{display:flex;gap:16px;flex-wrap:wrap;margin:4px 0 8px;color:var(--muted);font-size:12px;font-weight:650}
+      .annual-legend span{display:inline-flex;align-items:center;gap:6px}
+      .annual-key{width:12px;height:8px;border-radius:3px;display:inline-block}
+      .annual-key.income{background:var(--green)}.annual-key.expense{background:var(--red)}
+      .annual-key.net{height:3px;background:var(--accent)}
+      .annual-chart-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px}
+      .annual-chart{display:block;width:100%;min-width:720px;height:auto;color:var(--text)}
+      .annual-chart text{fill:var(--muted);font-size:11px;font-family:inherit}
+      .annual-chart .grid-line{stroke:var(--line);stroke-width:1}
+      .annual-chart .axis-line{stroke:var(--muted);stroke-width:1}
+      .annual-chart .income-bar{fill:var(--green)}.annual-chart .expense-bar{fill:var(--red)}
+      .annual-chart .net-line{fill:none;stroke:var(--accent);stroke-width:3;stroke-linejoin:round;stroke-linecap:round}
+      .annual-chart .net-dot{fill:var(--card);stroke:var(--accent);stroke-width:3}
+      .annual-note{margin-top:6px}
+      @media(max-width:520px){.report-filters{grid-template-columns:1fr}}
+    `;
+    document.head.appendChild(style);
+  }
+
+  function installReportUi() {
+    const card = document.querySelector("#reports > .card");
+    card.innerHTML = `
+      <div class="report-filters">
+        <label class="report-filter">Year<select id="reportYear" onchange="setReportYear(this.value)"></select></label>
+        <label class="report-filter">Month<select id="reportMonth" onchange="setReportMonth(this.value)">
+          <option value="all">All months</option>
+          ${MONTHS.map((month, index) => `<option value="${String(index + 1).padStart(2, "0")}">${month}</option>`).join("")}
+        </select></label>
+      </div>
+      <div id="reportSummary" class="grid"></div>
+      <div class="section-title"><h2>Annual overview</h2><span id="annualChartYear" class="muted"></span></div>
+      <div class="annual-legend" aria-label="Chart legend">
+        <span><i class="annual-key income"></i>Income</span>
+        <span><i class="annual-key expense"></i>Expenses</span>
+        <span><i class="annual-key net"></i>Month-end net worth</span>
+      </div>
+      <div id="annualChart" class="annual-chart-scroll"></div>
+      <div class="muted annual-note">Net worth is measured on the last day of completed months. The annual chart follows the year filter only.</div>
+      <div class="section-title"><h2 id="trendTitle">Spending trend</h2><span id="reportPeriodLabel" class="muted"></span></div>
+      <div id="trend" class="chart"></div>
+      <div class="section-title"><h2>Categories</h2></div><div id="reportCats"></div>
+      <div class="section-title"><h2>Spending by merchant</h2></div><div id="reportMerchants"></div>`;
+  }
+
+  function availableYears() {
+    const years = new Set([now.getFullYear()]);
+    data.transactions.forEach(transaction => {
+      const year = Number(String(transaction.date || "").slice(0, 4));
+      if (Number.isInteger(year)) years.add(year);
+    });
+    return [...years].sort((a, b) => b - a);
+  }
+
+  function syncReportControls() {
+    const yearSelect = el("reportYear");
+    yearSelect.innerHTML = availableYears().map(year =>
+      `<option value="${year}">${year}</option>`
+    ).join("");
+    yearSelect.value = String(reportYear);
+    el("reportMonth").value = reportMonth;
+  }
+
+  function isReportable(transaction) {
+    return transaction.type !== "transfer" && transaction.date <= today();
+  }
+
+  function filteredReportTransactions() {
+    const yearPrefix = String(reportYear) + "-";
+    const monthPrefix = reportMonth === "all" ? yearPrefix : yearPrefix + reportMonth + "-";
+    return data.transactions.filter(transaction =>
+      isReportable(transaction) && transaction.date.startsWith(monthPrefix)
+    );
+  }
+
+  function reportAccountDelta(transaction, account) {
+    const amount = Number(transaction.amount);
+    if (transaction.type === "transfer") {
+      if (transaction.account === account.id) return account.type === "credit" ? amount : -amount;
+      if (transaction.toAccount === account.id) return account.type === "credit" ? -amount : amount;
+      return 0;
+    }
+    if (transaction.account !== account.id) return 0;
+    if (transaction.type === "expense") return account.type === "credit" ? amount : -amount;
+    return account.type === "credit" ? -amount : amount;
+  }
+
+  function netWorthAt(cutoff) {
+    return data.accounts.reduce((total, account) => {
+      const balance = Number(account.opening || 0) + data.transactions
+        .filter(transaction =>
+          transaction.date <= cutoff &&
+          (transaction.account === account.id || transaction.toAccount === account.id)
+        )
+        .reduce((sum, transaction) => sum + reportAccountDelta(transaction, account), 0);
+      return total + (account.type === "credit" ? -balance : balance);
+    }, 0);
+  }
+
+  function compactMoney(value) {
+    const absolute = Math.abs(value);
+    if (absolute >= 1000000) return "£" + (value / 1000000).toFixed(1) + "m";
+    if (absolute >= 1000) return "£" + (value / 1000).toFixed(1) + "k";
+    return "£" + Math.round(value);
+  }
+
+  function annualData() {
+    return MONTHS.map((label, index) => {
+      const month = String(index + 1).padStart(2, "0");
+      const prefix = reportYear + "-" + month + "-";
+      const transactions = data.transactions.filter(transaction =>
+        isReportable(transaction) && transaction.date.startsWith(prefix)
+      );
+      const income = transactions.filter(transaction => transaction.type === "income")
+        .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
+      const expense = transactions.filter(transaction => transaction.type === "expense")
+        .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
+      const monthEndDate = new Date(reportYear, index + 1, 0);
+      const completed = monthEndDate < new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const cutoff = [reportYear, month, String(monthEndDate.getDate()).padStart(2, "0")].join("-");
+      return { label, income, expense, netWorth: completed ? netWorthAt(cutoff) : null };
+    });
+  }
+
+  function renderAnnualChart() {
+    const values = annualData();
+    const width = 840, height = 330;
+    const margin = { top: 20, right: 70, bottom: 42, left: 66 };
+    const plotWidth = width - margin.left - margin.right;
+    const plotHeight = height - margin.top - margin.bottom;
+    const baseline = margin.top + plotHeight;
+    const groupWidth = plotWidth / 12;
+    const barWidth = Math.min(18, groupWidth * 0.3);
+    const flowMax = Math.max(1, ...values.flatMap(item => [item.income, item.expense]));
+    const netValues = values.map(item => item.netWorth).filter(value => value !== null);
+    let netMin = netValues.length ? Math.min(...netValues) : 0;
+    let netMax = netValues.length ? Math.max(...netValues) : 1;
+    if (netMin === netMax) {
+      const padding = Math.max(Math.abs(netMin) * 0.1, 1);
+      netMin -= padding; netMax += padding;
+    } else {
+      const padding = (netMax - netMin) * 0.08;
+      netMin -= padding; netMax += padding;
+    }
+    const flowY = value => baseline - (value / flowMax) * plotHeight;
+    const netY = value => margin.top + (netMax - value) / (netMax - netMin) * plotHeight;
+    const centreX = index => margin.left + groupWidth * index + groupWidth / 2;
+    const grid = Array.from({ length: 5 }, (_, index) => {
+      const ratio = index / 4;
+      const y = margin.top + ratio * plotHeight;
+      const flowValue = flowMax * (1 - ratio);
+      const netValue = netMax - (netMax - netMin) * ratio;
+      return `<line class="grid-line" x1="${margin.left}" y1="${y}" x2="${width - margin.right}" y2="${y}"/>
+        <text x="${margin.left - 8}" y="${y + 4}" text-anchor="end">${compactMoney(flowValue)}</text>
+        <text x="${width - margin.right + 8}" y="${y + 4}" text-anchor="start">${compactMoney(netValue)}</text>`;
+    }).join("");
+    const bars = values.map((item, index) => {
+      const x = centreX(index);
+      const incomeY = flowY(item.income), expenseY = flowY(item.expense);
+      return `<rect class="income-bar" x="${x - barWidth - 2}" y="${incomeY}" width="${barWidth}" height="${Math.max(0, baseline - incomeY)}" rx="3">
+          <title>${item.label} income: ${money(item.income)}</title></rect>
+        <rect class="expense-bar" x="${x + 2}" y="${expenseY}" width="${barWidth}" height="${Math.max(0, baseline - expenseY)}" rx="3">
+          <title>${item.label} expenses: ${money(item.expense)}</title></rect>`;
+    }).join("");
+    const points = values.map((item, index) =>
+      item.netWorth === null ? null : { x: centreX(index), y: netY(item.netWorth), ...item }
+    ).filter(Boolean);
+    const line = points.length
+      ? `<polyline class="net-line" points="${points.map(point => point.x + "," + point.y).join(" ")}"/>` : "";
+    const dots = points.map(point =>
+      `<circle class="net-dot" cx="${point.x}" cy="${point.y}" r="4">
+        <title>${point.label} month-end net worth: ${money(point.netWorth)}</title></circle>`
+    ).join("");
+    const monthLabels = values.map((item, index) =>
+      `<text x="${centreX(index)}" y="${height - 16}" text-anchor="middle">${item.label}</text>`
+    ).join("");
+    el("annualChart").innerHTML = `<svg class="annual-chart" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="annualChartTitle annualChartDesc">
+      <title id="annualChartTitle">${reportYear} income, expenses and month-end net worth</title>
+      <desc id="annualChartDesc">Monthly income and expense bars with a line showing net worth on the last day of each completed month.</desc>
+      ${grid}
+      <line class="axis-line" x1="${margin.left}" y1="${baseline}" x2="${width - margin.right}" y2="${baseline}"/>
+      <text x="16" y="${margin.top + plotHeight / 2}" transform="rotate(-90 16 ${margin.top + plotHeight / 2})" text-anchor="middle">Monthly flow</text>
+      <text x="${width - 12}" y="${margin.top + plotHeight / 2}" transform="rotate(90 ${width - 12} ${margin.top + plotHeight / 2})" text-anchor="middle">Month-end net worth</text>
+      ${bars}${line}${dots}${monthLabels}
+    </svg>`;
+    el("annualChartYear").textContent = String(reportYear);
+  }
+
+  function renderSummary(transactions) {
+    const income = transactions.filter(transaction => transaction.type === "income")
+      .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
+    const expense = transactions.filter(transaction => transaction.type === "expense")
+      .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
+    el("reportSummary").innerHTML = `
+      <div class="card stat"><div class="label">Income</div><div class="value green">${money(income)}</div></div>
+      <div class="card stat"><div class="label">Spent</div><div class="value red">${money(expense)}</div></div>
+      <div class="card stat"><div class="label">Net</div><div class="value">${money(income - expense)}</div></div>
+      <div class="card stat"><div class="label">Transactions</div><div class="value">${transactions.length}</div></div>`;
+  }
+
+  function renderSelectedTrend(transactions) {
+    const allMonths = reportMonth === "all";
+    const bucketCount = allMonths ? 12 : new Date(reportYear, Number(reportMonth), 0).getDate();
+    const buckets = Array.from({ length: bucketCount }, (_, index) => ({
+      label: allMonths ? MONTHS[index] : String(index + 1),
+      value: 0
+    }));
+    transactions.filter(transaction => transaction.type === "expense").forEach(transaction => {
+      const index = allMonths ? Number(transaction.date.slice(5, 7)) - 1 : Number(transaction.date.slice(8, 10)) - 1;
+      if (buckets[index]) buckets[index].value += Number(transaction.amount);
+    });
+    const max = Math.max(1, ...buckets.map(bucket => bucket.value));
+    el("trend").innerHTML = buckets.map(bucket =>
+      `<div class="col"><i style="height:${Math.max(2, bucket.value / max * 100)}%" title="${esc(bucket.label)}: ${money(bucket.value)}"></i><span>${esc(bucket.label)}</span></div>`
+    ).join("");
+    el("trendTitle").textContent = allMonths ? "Monthly spending" : "Daily spending";
+  }
+
+  function renderBreakdowns(transactions) {
+    const categories = {};
+    const merchants = {};
+    transactions.filter(transaction => transaction.type === "expense").forEach(transaction => {
+      categories[transaction.category] = (categories[transaction.category] || 0) + Number(transaction.amount);
+      const merchant = (transaction.merchant || "").trim() || "Unspecified merchant";
+      merchants[merchant] = (merchants[merchant] || 0) + Number(transaction.amount);
+    });
+    const categoryRows = Object.entries(categories).sort((a, b) => b[1] - a[1]);
+    el("reportCats").innerHTML = categoryRows.length ? categoryRows.map(([id, value]) => {
+      const category = getCat(id);
+      return `<div class="row"><span>${category.icon} ${esc(category.name)}</span><b>${money(value)}</b></div>`;
+    }).join("") : `<div class="empty">No spending in this period</div>`;
+    const merchantRows = Object.entries(merchants).sort((a, b) => b[1] - a[1]);
+    el("reportMerchants").innerHTML = merchantRows.length ? merchantRows.map(([merchant, value]) =>
+      `<div class="row"><span>🏪 ${esc(merchant)}</span><b>${money(value)}</b></div>`
+    ).join("") : `<div class="empty">No merchant spending in this period</div>`;
+  }
+
+  window.setReportYear = function (value) {
+    reportYear = Number(value);
+    renderReports();
+  };
+
+  window.setReportMonth = function (value) {
+    reportMonth = value;
+    renderReports();
+  };
+
+  renderReports = function () {
+    syncReportControls();
+    const transactions = filteredReportTransactions();
+    const period = reportMonth === "all"
+      ? String(reportYear)
+      : new Date(reportYear, Number(reportMonth) - 1, 1).toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+    el("reportPeriodLabel").textContent = period;
+    renderSummary(transactions);
+    renderAnnualChart();
+    renderSelectedTrend(transactions);
+    renderBreakdowns(transactions);
+  };
+
+  installReportStyles();
+  installReportUi();
+  renderReports();
+})();
+
+
