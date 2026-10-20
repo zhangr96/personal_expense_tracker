@@ -1035,3 +1035,120 @@
 })();
 
 
+
+
+/* Report drill-down and top modal controls. */
+(function () {
+  function installDrilldownStyles() {
+    const style = document.createElement("style");
+    style.textContent = ".sheet-top-actions{position:sticky;top:-10px;z-index:4;display:flex;justify-content:flex-end;margin:-2px 0 6px;padding:8px 0;background:linear-gradient(to bottom,var(--card,#fff) 70%,transparent)}" +
+      ".report-drill-row{cursor:pointer;border-radius:14px;padding-left:8px;padding-right:8px}" +
+      ".report-drill-row:active,.report-drill-row:focus{background:rgba(10,132,255,.09);outline:none}";
+    document.head.appendChild(style);
+  }
+
+  function addTopAccountClose() {
+    const sheet = document.querySelector("#accountHistoryModal .sheet");
+    if (!sheet || sheet.querySelector(".account-history-top-close")) return;
+    sheet.insertAdjacentHTML("afterbegin",
+      '<div class="sheet-top-actions account-history-top-close">' +
+      '<button type="button" class="btn small secondary" onclick="closeAccountHistory()" aria-label="Close account transactions">✕ Close</button></div>'
+    );
+  }
+
+  function installReportDrilldownUi() {
+    document.body.insertAdjacentHTML("beforeend", [
+      '<div id="reportDrilldownModal" class="modal" onclick="if(event.target===this)closeReportDrilldown()">',
+      '<div class="sheet">',
+      '<div class="sheet-top-actions"><button type="button" class="btn small secondary" onclick="closeReportDrilldown()" aria-label="Close report transactions">✕ Close</button></div>',
+      '<h2 id="reportDrilldownTitle">Transactions</h2>',
+      '<div id="reportDrilldownSummary" class="notice"></div>',
+      '<div id="reportDrilldownList" class="list"></div>',
+      '<div class="actions"><button type="button" class="btn secondary" onclick="closeReportDrilldown()">Close</button></div>',
+      "</div></div>"
+    ].join(""));
+  }
+
+  function selectedReportExpenses() {
+    const year = el("reportYear")?.value;
+    const month = el("reportMonth")?.value || "all";
+    if (!year) return [];
+    const prefix = month === "all" ? year + "-" : year + "-" + month + "-";
+    return data.transactions.filter(transaction =>
+      transaction.type === "expense" &&
+      transaction.date <= today() &&
+      String(transaction.date || "").startsWith(prefix)
+    );
+  }
+
+  function openDrilldown(kind, key, label) {
+    const transactions = selectedReportExpenses()
+      .filter(transaction => kind === "category"
+        ? transaction.category === key
+        : ((transaction.merchant || "").trim() || "Unspecified merchant") === key)
+      .sort(window.transactionNewestFirst || ((a, b) => b.date.localeCompare(a.date)));
+    const total = transactions.reduce((sum, transaction) => sum + Number(transaction.amount), 0);
+    el("reportDrilldownTitle").textContent = label;
+    el("reportDrilldownSummary").textContent = transactions.length + " transaction" +
+      (transactions.length === 1 ? "" : "s") + " · " + money(total);
+    el("reportDrilldownList").innerHTML = transactions.length
+      ? transactions.map(transaction => txHtml(transaction, false)).join("")
+      : '<div class="empty">No transactions in this reporting period.</div>';
+    el("reportDrilldownModal").classList.add("open");
+  }
+
+  window.closeReportDrilldown = function () {
+    el("reportDrilldownModal").classList.remove("open");
+  };
+
+  function makeRowInteractive(row, label, action) {
+    row.classList.add("report-drill-row");
+    row.setAttribute("role", "button");
+    row.setAttribute("tabindex", "0");
+    row.setAttribute("aria-label", "View transactions for " + label);
+    row.onclick = action;
+    row.onkeydown = event => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        action();
+      }
+    };
+  }
+
+  function decorateReportBreakdowns() {
+    const expenses = selectedReportExpenses();
+    const categoryTotals = {};
+    const merchantTotals = {};
+    expenses.forEach(transaction => {
+      categoryTotals[transaction.category] = (categoryTotals[transaction.category] || 0) + Number(transaction.amount);
+      const merchant = (transaction.merchant || "").trim() || "Unspecified merchant";
+      merchantTotals[merchant] = (merchantTotals[merchant] || 0) + Number(transaction.amount);
+    });
+
+    const categories = Object.entries(categoryTotals).sort((a, b) => b[1] - a[1]);
+    [...el("reportCats").querySelectorAll(".row")].forEach((row, index) => {
+      const entry = categories[index];
+      if (!entry) return;
+      const category = getCat(entry[0]);
+      makeRowInteractive(row, category.name, () => openDrilldown("category", entry[0], category.icon + " " + category.name));
+    });
+
+    const merchants = Object.entries(merchantTotals).sort((a, b) => b[1] - a[1]);
+    [...el("reportMerchants").querySelectorAll(".row")].forEach((row, index) => {
+      const entry = merchants[index];
+      if (!entry) return;
+      makeRowInteractive(row, entry[0], () => openDrilldown("merchant", entry[0], "🏪 " + entry[0]));
+    });
+  }
+
+  const baseRenderReportsForDrilldown = renderReports;
+  renderReports = function () {
+    baseRenderReportsForDrilldown();
+    decorateReportBreakdowns();
+  };
+
+  installDrilldownStyles();
+  addTopAccountClose();
+  installReportDrilldownUi();
+  renderReports();
+})();
