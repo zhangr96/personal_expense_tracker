@@ -1,10 +1,10 @@
 const CACHE_PREFIX = "personal-expense-tracker-";
-const CACHE_VERSION = "v16-annual-reporting-cache-bust";
+const CACHE_VERSION = "v17-report-drilldowns";
 const CACHE_NAME = `${CACHE_PREFIX}${CACHE_VERSION}`;
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./app-v3.js?v=15",
+  "./app-v3.js?v=17",
   "./manifest.json",
   "./icon-192.png",
   "./icon-512.png",
